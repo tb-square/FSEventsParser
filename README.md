@@ -1,3 +1,8 @@
+*** NEW ***
+---------------------
+- Updated for SLD3 header with new (and currently unknown) field.
+- Updated for python3 using https://github.com/dlcowen/FSEventsParser/pull/9/commits/22ad954f5607469572733f6fa4f62a8ae59b9d91, thanks https://github.com/Schramp!
+
 Overview
 ---------------------
 
