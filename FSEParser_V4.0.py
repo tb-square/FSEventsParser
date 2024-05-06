@@ -30,7 +30,7 @@ import re
 import datetime
 import sqlite3
 import json
-import StringIO
+import io
 from time import (gmtime, strftime)
 from optparse import OptionParser
 import contextlib
@@ -184,7 +184,7 @@ def parse_options():
         options.error(IMPORT_ERROR)
 
     if meta['reportqueries'] ==False:
-        print '[Info]: Report queries file not specified using the -q option. Custom reports will not be generated.'
+        print('[Info]: Report queries file not specified using the -q option. Custom reports will not be generated.')
         
     if meta['casename'] is False:
         print('[Info]: No casename specified using -c. Defaulting to "FSE_Reports".')
@@ -372,7 +372,7 @@ class FSEventHandler():
         work if GzipFile does it's checksum comparison.
         stackoverflow.com/questions/1732709/unzipping-part-of-a-gz-file-using-python/18602286
         """
-        _read_eof = gzip.GzipFile._read_eof
+        _read_eof = gzip._GzipReader._read_eof
         gzip.GzipFile._read_eof = lambda *args, **kwargs: None
         yield
         gzip.GzipFile._read_eof = _read_eof
@@ -532,7 +532,7 @@ class FSEventHandler():
             except:
                 location = file_system_path_spec.location
                 
-            print "  Processing Volume {}.\n".format(location)
+            print("  Processing Volume {}.\n".format(location))
 
             fs_event_path_spec = path_spec_factory.Factory.NewPathSpec(
                 file_system_path_spec.type_indicator,
@@ -598,7 +598,7 @@ class FSEventHandler():
                         self.is_carved_gzip = True
                     file_object = sub_file_entry.GetFileObject()
 
-                    compressedFile = StringIO.StringIO()
+                    compressedFile = io.StringIO.BytesIO()
                     compressedFile.write(file_object.read())
                     compressedFile.seek(0)
                     # Attempt to decompress the fsevent archive
@@ -674,7 +674,7 @@ class FSEventHandler():
                 page_len = struct.unpack("<I", raw_file[start_offset + 8:start_offset + 12])[0]
                 end_offset = start_offset + page_len
 
-                if raw_file[start_offset:start_offset + 4] == '1SLD' or raw_file[start_offset:start_offset + 4] == '2SLD':
+                if raw_file[start_offset:start_offset + 4] == b'1SLD' or raw_file[start_offset:start_offset + 4] == b'2SLD' or raw_file[start_offset:start_offset + 4] == b'3SLD':
                     self.my_dls.append({'Start Offset': start_offset, 'End Offset': end_offset})
                     dls_count += 1
                 else:
@@ -718,12 +718,16 @@ class FSEventHandler():
             self.page_offset = start_offset
 
             # Reverse byte stream to match byte order little-endian
-            m_dls_chk = raw_page[3] + raw_page[2] + raw_page[1] + raw_page[0]
+            m_dls_chk = raw_page[0:4]
             # Assign DLS version based off magic header in page
-            if m_dls_chk == "DLS1":
+            if m_dls_chk == b"1SLD":
                 self.dls_version = 1
-            elif m_dls_chk == "DLS2":
+            elif m_dls_chk == b"2SLD":
                 self.dls_version = 2
+            # CHANGE MADE FOR MACOS14 - SLD3
+            elif m_dls_chk == b"3SLD":
+                self.dls_version = 3
+                
             else:
                 self.logfile.write("%s: Unknown DLS Version." % (self.src_filename))
                 break
@@ -785,8 +789,11 @@ class FSEventHandler():
         # Start searching within fsevent file for events that match dates regex
         # As the length of each log location is different, create if statements for each
         # so that the date can be pulled from the correct location within the fullpath
-        for match in re.finditer(m_regex, raw_file):
-            if raw_file[match.regs[0][0]:match.regs[0][0] + 35] == "private/var/log/asl/Logs/aslmanager":
+
+        #decode to latin as it preveserves all lengths (1 byte == 1 character)
+        raw_file_ascii = raw_file.decode("latin_1")
+        for match in re.finditer(m_regex, raw_file_ascii):
+            if raw_file_ascii[match.regs[0][0]:match.regs[0][0] + 35] == "private/var/log/asl/Logs/aslmanager":
                 # Clear timestamp temp variable
                 t_temp = ''
                 # t_start uses the start offset of the match
@@ -794,11 +801,11 @@ class FSEventHandler():
                 # The date is 8 chars long in the format of yyyymmdd
                 t_end = t_start + 8
                 # Strip the date from the fsevent file
-                t_temp = raw_file[t_start:t_end]
+                t_temp = raw_file_ascii[t_start:t_end]
                 # Format the date
                 t_temp = t_temp[:4] + "." + t_temp[4:6] + "." + t_temp[6:8]
                 wd_temp = struct.unpack("<Q", raw_file[match.regs[0][1] - 9:match.regs[0][1] - 1])[0]
-            elif raw_file[match.regs[0][0]:match.regs[0][0] + 23] == "private/var/log/asl/AUX":
+            elif raw_file_ascii[match.regs[0][0]:match.regs[0][0] + 23] == "private/var/log/asl/AUX":
                 # Clear timestamp temp variable
                 t_temp = ''
                 # t_start uses the start offset of the match
@@ -806,9 +813,9 @@ class FSEventHandler():
                 # The date is 10 chars long in the format of yyyy.mm.dd
                 t_end = t_start + 10
                 # Strip the date from the fsevent file
-                t_temp = raw_file[t_start:t_end]
+                t_temp = raw_file_ascii[t_start:t_end]
                 wd_temp = struct.unpack("<Q", raw_file[match.regs[0][1] - 9:match.regs[0][1] - 1])[0]
-            elif raw_file[match.regs[0][0]:match.regs[0][0] + 19] == "private/var/log/asl":
+            elif raw_file_ascii[match.regs[0][0]:match.regs[0][0] + 19] == "private/var/log/asl":
                 # Clear timestamp temp variable
                 t_temp = ''
                 # t_start uses the start offset of the match
@@ -816,9 +823,9 @@ class FSEventHandler():
                 # The date is 10 chars long in the format of yyyy.mm.dd
                 t_end = t_start + 10
                 # Strip the date from the fsevent file
-                t_temp = raw_file[t_start:t_end]
+                t_temp = raw_file_ascii[t_start:t_end]
                 wd_temp = struct.unpack("<Q", raw_file[match.regs[0][1] - 9:match.regs[0][1] - 1])[0]
-            elif raw_file[match.regs[0][0]:match.regs[0][0] + 4] == "mobi":
+            elif raw_file_ascii[match.regs[0][0]:match.regs[0][0] + 4] == "mobi":
                 # Clear timestamp temp variable
                 t_temp = ''
                 # t_start uses the start offset of the match
@@ -826,11 +833,11 @@ class FSEventHandler():
                 # The date is 8 chars long in the format of yyyymmdd
                 t_end = t_start + 8
                 # Strip the date from the fsevent file
-                t_temp = raw_file[t_start:t_end]
+                t_temp = raw_file_ascii[t_start:t_end]
                 # Format the date
                 t_temp = t_temp[:4] + "." + t_temp[4:6] + "." + t_temp[6:8]
                 wd_temp = struct.unpack("<Q", raw_file[match.regs[0][1] - 9:match.regs[0][1] - 1])[0]
-            elif raw_file[match.regs[0][0]:match.regs[0][0] + 34] == "private/var/log/DiagnosticMessages":
+            elif raw_file_ascii[match.regs[0][0]:match.regs[0][0] + 34] == "private/var/log/DiagnosticMessages":
                 # Clear timestamp temp variable
                 t_temp = ''
                 # t_start uses the start offset of the match
@@ -838,9 +845,9 @@ class FSEventHandler():
                 # The date is 10 chars long in the format of yyyy.mm.dd
                 t_end = t_start + 10
                 # Strip the date from the fsevent file
-                t_temp = raw_file[t_start:t_end]
+                t_temp = raw_file_ascii[t_start:t_end]
                 wd_temp = struct.unpack("<Q", raw_file[match.regs[0][1] - 9:match.regs[0][1] - 1])[0]
-            elif raw_file[match.regs[0][0]:match.regs[0][0] + 39] == "private/var/log/com.apple.clouddocs.asl":
+            elif raw_file_ascii[match.regs[0][0]:match.regs[0][0] + 39] == "private/var/log/com.apple.clouddocs.asl":
                 # Clear timestamp temp variable
                 t_temp = ''
                 # t_start uses the start offset of the match
@@ -848,9 +855,9 @@ class FSEventHandler():
                 # The date is 10 chars long in the format of yyyy.mm.dd
                 t_end = t_start + 10
                 # Strip the date from the fsevent file
-                t_temp = raw_file[t_start:t_end]
+                t_temp = raw_file_ascii[t_start:t_end]
                 wd_temp = struct.unpack("<Q", raw_file[match.regs[0][1] - 9:match.regs[0][1] - 1])[0]
-            elif raw_file[match.regs[0][0]:match.regs[0][0] + 31] == "private/var/log/powermanagement":
+            elif raw_file_ascii[match.regs[0][0]:match.regs[0][0] + 31] == "private/var/log/powermanagement":
                 # Clear timestamp temp variable
                 t_temp = ''
                 # t_start uses the start offset of the match
@@ -858,9 +865,9 @@ class FSEventHandler():
                 # The date is 10 chars long in the format of yyyy.mm.dd
                 t_end = t_start + 10
                 # Strip the date from the fsevent file
-                t_temp = raw_file[t_start:t_end]
+                t_temp = raw_file_ascii[t_start:t_end]
                 wd_temp = struct.unpack("<Q", raw_file[match.regs[0][1] - 9:match.regs[0][1] - 1])[0]
-            elif raw_file[match.regs[0][0]:match.regs[0][0] + 17] == "private/var/audit":
+            elif raw_file_ascii[match.regs[0][0]:match.regs[0][0] + 17] == "private/var/audit":
                 # Clear timestamp temp variable
                 t_temp = ''
                 # t_start uses the start offset of the match
@@ -868,7 +875,7 @@ class FSEventHandler():
                 # The date is 8 chars long in the format of yyyymmdd
                 t_end = t_start + 8
                 # Strip the date from the fsevent file
-                t_temp = raw_file[t_start:t_end]
+                t_temp = raw_file_ascii[t_start:t_end]
                 # Format the date
                 t_temp = t_temp[:4] + "." + t_temp[4:6] + "." + t_temp[6:8]
                 wd_temp = struct.unpack("<Q", raw_file[match.regs[0][1] - 9:match.regs[0][1] - 1])[0]
@@ -970,6 +977,10 @@ class FSEventHandler():
         elif self.dls_version == 2:
             bin_len = 21
             rbin_len = 20
+        # CHANGE MADE FOR MACOS14 - SLD3
+        elif self.dls_version == 3:
+            bin_len = 25
+            rbin_len = 24
         else:
             pass
 
@@ -979,7 +990,7 @@ class FSEventHandler():
         # parsing stops for the current file
         while len_buf > start_offset and self.valid_record_check:
             # Grab the first char
-            char = page_buf[start_offset:end_offset].encode('hex')
+            char = page_buf[start_offset:end_offset].hex()
 
             if char != '00':
                 # Replace non-printable char with nothing
@@ -1003,7 +1014,7 @@ class FSEventHandler():
                 end_offset += bin_len
 
             # Decode fullpath that was stored as hex
-            fullpath = fullpath.decode('hex').replace('\t', '')
+            fullpath = bytes.fromhex(fullpath).decode("utf-8").replace('\t', '')
             # Store the record length
             record_len = len(fullpath) + bin_len
 
@@ -1020,7 +1031,7 @@ class FSEventHandler():
             raw_record = page_buf[r_start:r_end]
 
             # Strip mask from buffer and encode as hex #
-            mask_hex = "0x" + raw_record[8:12].encode('hex')
+            mask_hex = "0x" + raw_record[8:12].hex()
 
             # Account for carved files when record end offset
             # occurs after the length of the buffer
@@ -1035,6 +1046,14 @@ class FSEventHandler():
             # Introduced with HighSierra
             if self.dls_version == 2:
                 fs_node_id = struct.unpack("<q", raw_record[12:])[0]
+            # CHANGE MADE FOR MACOS14 - SLD3
+            elif self.dls_version == 3:
+                fs_node_id = struct.unpack("<q", raw_record[12:20])[0]
+
+            # CHANGE MADE FOR MACOS14 - SLD3
+            # Unknown value, may be related to Document Revisions
+            unknown_integer = int.from_bytes(raw_record[20:24], byteorder='little')
+
 
             record_off = start_offset + page_start_off
 
@@ -1059,7 +1078,7 @@ class FSEventHandler():
                 # Assign our current records attributes
                 attributes = {
                     'id': record.wd,
-                    'id_hex': record.wd_hex + " (" + str(record.wd) + ")",
+                    'id_hex': record.wd_hex.decode("ascii") + " (" + str(record.wd) + ")",
                     'fullpath': fullpath,
                     'filename': f_name,
                     'type': record.mask[0],
@@ -1067,6 +1086,7 @@ class FSEventHandler():
                     'approx_dates_plus_minus_one_day': dates,
                     'mask': mask_hex,
                     'node_id': fs_node_id,
+                    'unknown_integer': unknown_integer,
                     'record_end_offset': record_off,
                     'source': self.src_fullpath,
                     'source_modified_time': self.m_time
@@ -1102,12 +1122,6 @@ class FSEventHandler():
             h_lnk_err_2 = "LastHardLink" in mask[1] and ";Removed" not in mask[1]
             n_used_err = "NOT_USED-0x0" in mask[1]
             ver_error = "ItemCloned" in mask[1] and self.dls_version == 1
-
-            # Check for decode errors
-            try:
-                fullpath.decode('utf-8')
-            except:
-                decode_error = True
 
             # If any error exists return false to caller
             if type_err or \
@@ -1204,19 +1218,19 @@ class FSEventHandler():
                     try:
                         values.append(cell)
                     except:
-                        print row_count
-                        print type(cell)
-                        print cell
-                        print row
+                        print(row_count)
+                        print(type(cell))
+                        print(cell)
+                        print(row)
                         values.append("ERROR_IN_VALUE")
                 else:
                     try:
                         values.append(unicode(cell))
                     except:
-                        print row_count
-                        print type(cell)
-                        print cell
-                        print row
+                        print(row_count)
+                        print(type(cell))
+                        print(cell)
+                        print(row)
                         values.append("ERROR_IN_VALUE")
             m_row = u'\t'.join(values)
             m_row = m_row + u'\n'
@@ -1258,7 +1272,7 @@ class FSEventHandler():
                                 values.append(unicode(cell))
                     except:
                         values.append("ERROR_IN_VALUE")
-                        print "ERROR: ", row
+                        print("ERROR: ", row)
                     m_row = u'\t'.join(values)
                     m_row = m_row + u'\n'
                     outfile.write(m_row.encode("utf-8"))
@@ -1305,7 +1319,8 @@ class FSEventRecord(dict):
         # Record wd or event id
         self.wd = struct.unpack("<Q", buf[0:8])[0]
         # Record wd_hex
-        wd_buf = buf[7] + buf[6] + buf[5] + buf[4] + buf[3] + buf[2] + buf[1] + buf[0]
+        wd_buf = bytearray(buf[0:8])
+        wd_buf.reverse()
         self.wd_hex = binascii.b2a_hex(wd_buf)
         # Enumerate mask flags, string version
         self.mask = enumerate_flags(
@@ -1329,6 +1344,7 @@ class Output(dict):
                 u'approx_dates_plus_minus_one_day',
                 u'mask',
                 u'node_id',
+                u'unknown_integer',
                 u'record_end_offset',
                 u'source',
                 u'source_modified_time'
@@ -1362,7 +1378,7 @@ class Output(dict):
             values.append(str(key))
         row = '\t'.join(values)
         row = row + '\n'
-        outfile.write(row)
+        outfile.write(row.encode("utf8"))
 
 
     def append_row(self):
@@ -1399,6 +1415,7 @@ def create_sqlite_db(self):
                   [approx_dates_plus_minus_one_day] [TEXT] NULL, \
                   [mask] [TEXT] NULL, \
                   [node_id] [TEXT] NULL, \
+                  [unknown_integer] [TEXT] NULL, \
                   [record_end_offset] [TEXT] NULL, \
                   [source] [TEXT] NULL, \
                   [source_modified_time] [TEXT] NULL)"
@@ -1432,6 +1449,7 @@ def create_sqlite_db(self):
                 # Try to execute the query
                 cols = 'id_hex, \
                     node_id, \
+                    unknown_integer, \
                     fullpath, \
                     type, \
                     flags, \
@@ -1470,6 +1488,7 @@ def insert_sqlite_db(vals_to_insert):
         [approx_dates_plus_minus_one_day], \
         [mask], \
         [node_id], \
+        [unknown_integer], \
         [record_end_offset], \
         [source], \
         [source_modified_time]\
@@ -1541,8 +1560,4 @@ if __name__ == '__main__':
     Init checks to see if running appropriate python version.
     If it is, start the parser.
     """
-    if sys.version_info > (3, 0):
-        print('\nError: FSEventsParser does not currently support running under Python 3.x'
-              '. Python 2.7 recommended.\n')
-    else:
-        main()
+    main()
