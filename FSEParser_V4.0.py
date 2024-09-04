@@ -1449,7 +1449,6 @@ def create_sqlite_db(self):
                 # Try to execute the query
                 cols = 'id_hex, \
                     node_id, \
-                    unknown_integer, \
                     fullpath, \
                     type, \
                     flags, \
